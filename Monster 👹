@@ -1,0 +1,353 @@
+import os
+
+# Root project folder
+root = "MonsterStudy"
+
+# Folder structure
+folders = [
+    ".github/workflows",
+    "app/src/main/java/com/monster/study",
+    "app/src/main/assets",
+]
+
+# Create folders
+for f in folders:
+    os.makedirs(os.path.join(root, f), exist_ok=True)
+
+# -------------------- MonsterActivity.kt --------------------
+monster_kotlin_code = """
+package com.monster.study
+
+import android.app.*
+import android.content.*
+import android.os.*
+import android.speech.tts.TextToSpeech
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.appcompat.app.AppCompatActivity
+import java.util.*
+
+class MonsterActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+
+    private lateinit var webView: WebView
+    private lateinit var tts: TextToSpeech
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        tts = TextToSpeech(this, this)
+        webView = WebView(this)
+        webView.settings.javaScriptEnabled = true
+        webView.addJavascriptInterface(MonsterBridge(), "Monster")
+        webView.webViewClient = WebViewClient()
+        webView.loadUrl("file:///android_asset/index.html")
+        setContentView(webView)
+    }
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts.language = Locale.US
+        }
+    }
+
+    inner class MonsterBridge {
+
+        @JavascriptInterface
+        fun speak(text: String) {
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
+        }
+
+        @JavascriptInterface
+        fun command(cmd: String) {
+            when {
+                cmd.contains("pause", true) -> tts.stop()
+                cmd.contains("language", true) -> {
+                    tts.language = if(tts.language == Locale.US) Locale.UK else Locale.US
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun scheduleBreak(minutes: Int) {
+            val intent = Intent(this@MonsterActivity, BreakReceiver::class.java)
+            val pending = PendingIntent.getBroadcast(
+                this@MonsterActivity, 0, intent, PendingIntent.FLAG_IMMUTABLE
+            )
+            val am = getSystemService(ALARM_SERVICE) as AlarmManager
+            am.set(
+                AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + minutes * 60000,
+                pending
+            )
+        }
+    }
+
+    class BreakReceiver: BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            Toast.makeText(context,"Time for a break!",Toast.LENGTH_LONG).show()
+        }
+    }
+}
+"""
+
+# -------------------- index.html --------------------
+index_html = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Monster v2.0 Study Dashboard</title>
+</head>
+<body>
+<h2>Monster v2.0 Dashboard</h2>
+
+<input id="query" placeholder="Search Wikipedia">
+<button onclick="search()">Search</button>
+<div id="wikiResult"></div>
+
+<textarea id="aiPrompt" placeholder="Ask Monster AI"></textarea>
+<button onclick="askAI()">Ask AI</button>
+<div id="aiAnswer"></div>
+
+<button onclick="read()">Read Aloud</button>
+<button onclick="highlightSelection()">Highlight</button>
+<button onclick="recap()">Recap</button>
+<button onclick="cloze()">Cloze</button>
+<button onclick="mcq()">MCQ</button>
+<button onclick="listen()">Voice Cmd</button>
+<button onclick="startExam()">Start Exam</button>
+<button onclick="saveProgress()">Save Progress</button>
+
+<select id="langSelect" onchange="setLang()">
+  <option value="en-US">English</option>
+  <option value="fr-FR">French</option>
+  <option value="es-ES">Spanish</option>
+</select>
+
+<script>
+let highlightColor = "yellow";
+let voices = ["en-US", "en-GB", "en-IN"];
+let voiceIndex = 0;
+
+function read() {
+    const text = window.getSelection().toString() || document.body.innerText;
+    Monster.speak(text);
+    voiceIndex = (voiceIndex + 1) % voices.length;
+}
+
+function highlightSelection() {
+    const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    const span = document.createElement("span");
+    span.style.backgroundColor = highlightColor;
+    range.surroundContents(span);
+}
+
+function setColor(color) { highlightColor = color; }
+
+function recap() {
+    alert("Key ideas:\\n" + document.body.innerText.split('.').slice(0,5).join('.'));
+}
+
+function cloze() {
+    const words=document.body.innerText.split(" ");
+    const index=Math.floor(Math.random()*words.length);
+    words[index]="_____";
+    alert(words.slice(0,50).join(" "));
+}
+
+function mcq() {
+    alert("Q: What is the main idea?\\nA) Option 1\\nB) Option 2\\nC) Option 3\\nD) Option 4");
+}
+
+function search() {
+    const q = document.getElementById("query").value;
+    fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(q)}`)
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById("wikiResult").innerHTML =
+                `<h3>${data.title}</h3><p>${data.extract}</p>`;
+            Monster.speak(data.extract);
+        })
+        .catch(()=>alert("Wikipedia not found"));
+}
+
+function askAI() {
+    const prompt=document.getElementById("aiPrompt").value;
+    fetch("https://your-ai-endpoint.example/api", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({prompt:prompt, context: document.body.innerText.slice(0,3000)})
+    })
+    .then(res=>res.json())
+    .then(data=>{
+        document.getElementById("aiAnswer").innerText=data.answer;
+        Monster.speak(data.answer);
+    }).catch(()=>alert("AI offline"));
+}
+
+function listen() {
+    if(!('webkitSpeechRecognition' in window)){ alert("Voice not supported"); return; }
+    const recognition=new webkitSpeechRecognition();
+    recognition.lang="en-US";
+    recognition.start();
+    recognition.onresult=function(event){
+        const cmd=event.results[0][0].transcript;
+        Monster.command(cmd);
+        routeCommand(cmd);
+    };
+}
+
+function routeCommand(cmd) {
+    cmd=cmd.toLowerCase();
+    if(cmd.includes("read")) read();
+    else if(cmd.includes("highlight")) highlightSelection();
+    else if(cmd.includes("quiz")) mcq();
+    else if(cmd.includes("recap")) recap();
+    else if(cmd.includes("cloze")) cloze();
+    else alert("Command not recognized");
+}
+
+function startExam() {
+    document.getElementById("examArea")?.remove();
+    const examArea=document.createElement("div");
+    examArea.id="examArea";
+    examArea.innerHTML=`
+        <div id="examTimer"></div>
+        <div id="questions">
+            <p>1. Sample Q?</p>
+            <input type="text" id="q1">
+        </div>
+        <button onclick="submitExam()">Submit Exam</button>`;
+    document.body.appendChild(examArea);
+    let time=600;
+    const timerEl=document.getElementById("examTimer");
+    const interval=setInterval(()=>{
+        timerEl.innerText=`Time left: ${time}s`;
+        time--;
+        if(time<0){ clearInterval(interval); submitExam(); }
+    },1000);
+}
+
+function submitExam() {
+    const ans=document.getElementById("q1")?.value;
+    alert(`Exam submitted. Answer: ${ans}`);
+    document.getElementById("examArea").style.display="none";
+}
+
+function saveProgress() {
+    localStorage.setItem("monster_notes", document.body.innerHTML);
+    alert("Progress saved");
+}
+
+function loadProgress() {
+    const data=localStorage.getItem("monster_notes");
+    if(data) document.body.innerHTML=data;
+}
+
+window.onload=loadProgress;
+
+</script>
+</body>
+</html>
+"""
+
+# -------------------- Manifest --------------------
+manifest = """<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.monster.study">
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <application
+        android:allowBackup="true"
+        android:label="Monster"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+        <activity
+            android:name=".MonsterActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>"""
+
+# -------------------- Gradle --------------------
+root_build_gradle = """buildscript {
+    repositories { google(); mavenCentral() }
+    dependencies { classpath "com.android.tools.build:gradle:8.2.0" }
+}
+allprojects { repositories { google(); mavenCentral() } }"""
+
+settings_gradle = """rootProject.name = "MonsterStudy"
+include ':app'"""
+
+app_build_gradle = """plugins { id 'com.android.application' }
+android {
+    namespace 'com.monster.study'
+    compileSdk 34
+    defaultConfig {
+        applicationId "com.monster.study"
+        minSdk 26
+        targetSdk 34
+        versionCode 2
+        versionName "2.0"
+    }
+    buildTypes { release { minifyEnabled false } }
+}
+dependencies {
+    implementation "androidx.appcompat:appcompat:1.7.0"
+    implementation "androidx.recyclerview:recyclerview:1.3.0"
+}
+"""
+
+# -------------------- GitHub Workflow --------------------
+workflow = """name: Build Monster APK
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Grant execute permission for Gradle
+        run: chmod +x ./gradlew
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Monster-v2.0-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+"""
+
+# -------------------- File writing --------------------
+files = {
+    "app/src/main/java/com/monster/study/MonsterActivity.kt": monster_kotlin_code,
+    "app/src/main/assets/index.html": index_html,
+    "app/src/main/AndroidManifest.xml": manifest,
+    "build.gradle": root_build_gradle,
+    "settings.gradle": settings_gradle,
+    "app/build.gradle": app_build_gradle,
+    ".github/workflows/android-build.yml": workflow,
+}
+
+for path, content in files.items():
+    full_path = os.path.join(root, path)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+print(f"MonsterStudy v2.0 fully generated in folder '{root}'. Push to GitHub to build APK!")
